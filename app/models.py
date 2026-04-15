@@ -66,6 +66,7 @@ class Survey(Base):
     )
     responses = relationship("Response", back_populates="survey", cascade="all, delete-orphan")
     distributions = relationship("SurveyDistribution", back_populates="survey", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by], lazy="joined")
 
 
 class Question(Base):

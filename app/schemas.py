@@ -65,11 +65,15 @@ class SurveyOut(BaseModel):
     startDate: Optional[datetime] = None
     endDate: Optional[datetime] = None
     questions: list[QuestionOut] = []
+    createdByName: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
     @classmethod
     def from_orm_survey(cls, survey) -> "SurveyOut":
+        created_by_name = None
+        if hasattr(survey, "creator") and survey.creator:
+            created_by_name = survey.creator.full_name
         return cls(
             id=survey.id,
             title=survey.title,
@@ -79,6 +83,7 @@ class SurveyOut(BaseModel):
             startDate=survey.start_date,
             endDate=survey.end_date,
             questions=[QuestionOut.model_validate(q) for q in survey.questions],
+            createdByName=created_by_name,
         )
 
 

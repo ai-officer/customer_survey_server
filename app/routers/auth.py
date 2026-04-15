@@ -6,7 +6,7 @@ import uuid
 
 from ..database import get_db
 from ..models import User, UserRole, AuditLog
-from ..security import verify_password, create_access_token, get_current_user
+from ..security import verify_password, hash_password, create_access_token, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -60,3 +60,35 @@ def login(
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password", status_code=204)
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+
+    ip = request.client.host if request.client else "unknown"
+    db.add(AuditLog(
+        id=str(uuid.uuid4()),
+        user_id=current_user.id,
+        action="CHANGE_PASSWORD",
+        resource="user",
+        resource_id=current_user.id,
+        detail=f"User changed their password: {current_user.email}",
+        ip_address=ip,
+    ))
+    db.commit()
