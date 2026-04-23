@@ -205,17 +205,27 @@ class DepartmentBucket(BaseModel):
     surveys: int
 
 
+class DepartmentEngagement(BaseModel):
+    department: str
+    responseCount: int
+    participationRate: Optional[float] = None
+    csat: Optional[float] = None
+    nps: Optional[float] = None
+
+
 class DashboardAnalytics(BaseModel):
     totalResponses: int
     surveyCount: int
     activeSurveys: int
     completionRate: float
+    previousCompletionRate: Optional[float] = None
     csat: str
     nps: float
     responseTrend: list[TrendPoint]
     surveyPerformance: list[TrendPoint]
     ratingDistribution: list[RatingBucket] = []
     departmentBreakdown: list[DepartmentBucket] = []
+    departmentEngagement: list[DepartmentEngagement] = []
     adminSurveyBreakdown: list[TrendPoint] = []
 
 

@@ -9,7 +9,7 @@ from ..database import get_db
 from ..models import Survey, Response, SurveyDistribution, Department, User, UserRole
 from ..schemas import (
     DashboardAnalytics, SurveyAnalytics, CsatPoint, ThemeCount, TrendPoint,
-    RatingBucket, DepartmentBucket,
+    RatingBucket, DepartmentBucket, DepartmentEngagement,
 )
 from ..security import require_any
 
@@ -199,6 +199,52 @@ def dashboard_analytics(
         for name, v in sorted(dept_counts.items(), key=lambda kv: kv[1]["responses"], reverse=True)
     ]
 
+    # Per-department engagement (participation rate, CSAT, NPS per department)
+    dept_department_engagement: list[DepartmentEngagement] = []
+    # Group responses by department via their survey
+    responses_by_dept: dict[str, list] = {}
+    for r in responses:
+        s = survey_by_id.get(r.survey_id)
+        if not s:
+            continue
+        dname = s.department.name if s.department else "Unassigned"
+        responses_by_dept.setdefault(dname, []).append(r)
+    for dname, dresponses in responses_by_dept.items():
+        d_total = len(dresponses)
+        d_complete = sum(1 for r in dresponses if r.is_complete)
+        d_participation = round(d_complete / d_total * 100, 1) if d_total else None
+        d_ratings = _extract_ratings(dresponses)
+        d_csat = round(sum(d_ratings) / len(d_ratings), 1) if d_ratings else None
+        d_nps = _compute_nps(d_ratings) if d_ratings else None
+        dept_department_engagement.append(DepartmentEngagement(
+            department=dname,
+            responseCount=d_total,
+            participationRate=d_participation,
+            csat=d_csat,
+            nps=d_nps,
+        ))
+    # Sort by response count desc so the heatmap surfaces the busiest teams first
+    dept_department_engagement.sort(key=lambda d: d.responseCount, reverse=True)
+
+    # Prior-period completion rate (only when a date window is explicit)
+    previous_completion_rate: float | None = None
+    if start_date and end_date and end_date > start_date:
+        window = end_date - start_date
+        prev_end = start_date
+        prev_start = start_date - window
+        prev_q = db.query(Response)
+        if status or survey_ids:
+            prev_q = prev_q.filter(Response.survey_id.in_(survey_ids))
+        prev_q = prev_q.filter(
+            Response.submitted_at >= prev_start,
+            Response.submitted_at < prev_end,
+        )
+        prev_responses = prev_q.all()
+        prev_total = len(prev_responses)
+        prev_complete = sum(1 for r in prev_responses if r.is_complete)
+        if prev_total:
+            previous_completion_rate = round(prev_complete / prev_total * 100, 1)
+
     # Admin-only breakdown: responses per survey creator
     admin_survey_breakdown: list[TrendPoint] = []
     if current_user.role == UserRole.admin:
@@ -219,12 +265,14 @@ def dashboard_analytics(
         surveyCount=survey_count,
         activeSurveys=active_surveys,
         completionRate=completion_rate,
+        previousCompletionRate=previous_completion_rate,
         csat=f"{csat:.1f}",
         nps=nps,
         responseTrend=trend,
         surveyPerformance=survey_performance,
         ratingDistribution=rating_distribution,
         departmentBreakdown=department_breakdown,
+        departmentEngagement=dept_department_engagement,
         adminSurveyBreakdown=admin_survey_breakdown,
     )
 
