@@ -6,8 +6,11 @@ from collections import Counter
 import re
 
 from ..database import get_db
-from ..models import Survey, Response, SurveyDistribution
-from ..schemas import DashboardAnalytics, SurveyAnalytics, CsatPoint, ThemeCount, TrendPoint
+from ..models import Survey, Response, SurveyDistribution, Department, User, UserRole
+from ..schemas import (
+    DashboardAnalytics, SurveyAnalytics, CsatPoint, ThemeCount, TrendPoint,
+    RatingBucket, DepartmentBucket,
+)
 from ..security import require_any
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -117,6 +120,9 @@ def dashboard_analytics(
     current_user=Depends(require_any),
 ):
     survey_q = db.query(Survey)
+    # Non-admins only see their own surveys in dashboard totals
+    if current_user.role != UserRole.admin:
+        survey_q = survey_q.filter(Survey.created_by == current_user.id)
     if status:
         survey_q = survey_q.filter(Survey.status == status)
     if survey_id:
@@ -164,6 +170,50 @@ def dashboard_analytics(
     for s in surveys[:7]:
         survey_performance.append(TrendPoint(name=s.title[:20], responses=survey_response_counts.get(s.id, 0)))
 
+    # Rating scale distribution (1-5)
+    rating_counter: Counter = Counter()
+    for score in rating_scores:
+        bucket = int(round(score))
+        if 1 <= bucket <= 5:
+            rating_counter[bucket] += 1
+    rating_distribution = [
+        RatingBucket(rating=i, count=rating_counter.get(i, 0)) for i in range(1, 6)
+    ]
+
+    # Department breakdown
+    dept_counts: dict[str, dict[str, int]] = {}
+    survey_by_id = {s.id: s for s in surveys}
+    for s in surveys:
+        dname = s.department.name if s.department else "Unassigned"
+        dept_counts.setdefault(dname, {"responses": 0, "surveys": 0})
+        dept_counts[dname]["surveys"] += 1
+    for r in responses:
+        s = survey_by_id.get(r.survey_id)
+        if not s:
+            continue
+        dname = s.department.name if s.department else "Unassigned"
+        dept_counts.setdefault(dname, {"responses": 0, "surveys": 0})
+        dept_counts[dname]["responses"] += 1
+    department_breakdown = [
+        DepartmentBucket(department=name, responses=v["responses"], surveys=v["surveys"])
+        for name, v in sorted(dept_counts.items(), key=lambda kv: kv[1]["responses"], reverse=True)
+    ]
+
+    # Admin-only breakdown: responses per survey creator
+    admin_survey_breakdown: list[TrendPoint] = []
+    if current_user.role == UserRole.admin:
+        creator_counts: Counter = Counter()
+        user_ids = {s.created_by for s in surveys if s.created_by}
+        users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+        for r in responses:
+            s = survey_by_id.get(r.survey_id)
+            if s and s.created_by:
+                creator_counts[s.created_by] += 1
+        for uid, count in creator_counts.most_common(10):
+            u = users.get(uid)
+            name = u.full_name if u else "Unknown"
+            admin_survey_breakdown.append(TrendPoint(name=name[:20], responses=count))
+
     return DashboardAnalytics(
         totalResponses=total_responses,
         surveyCount=survey_count,
@@ -173,6 +223,9 @@ def dashboard_analytics(
         nps=nps,
         responseTrend=trend,
         surveyPerformance=survey_performance,
+        ratingDistribution=rating_distribution,
+        departmentBreakdown=department_breakdown,
+        adminSurveyBreakdown=admin_survey_breakdown,
     )
 
 
@@ -187,6 +240,8 @@ def survey_analytics(
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
+    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only view analytics for surveys you created")
 
     resp_q = db.query(Response).filter(Response.survey_id == survey_id)
     if start_date:

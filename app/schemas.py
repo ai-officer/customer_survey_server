@@ -44,6 +44,8 @@ class SurveyCreate(BaseModel):
     status: SurveyStatus = SurveyStatus.draft
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
+    department_id: Optional[str] = None
+    customer: Optional[str] = None
     questions: list[QuestionCreate] = []
 
 
@@ -53,6 +55,8 @@ class SurveyUpdate(BaseModel):
     status: Optional[SurveyStatus] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
+    department_id: Optional[str] = None
+    customer: Optional[str] = None
     questions: Optional[list[QuestionCreate]] = None
 
 
@@ -64,8 +68,12 @@ class SurveyOut(BaseModel):
     createdAt: datetime
     startDate: Optional[datetime] = None
     endDate: Optional[datetime] = None
-    questions: list[QuestionOut] = []
+    createdBy: Optional[str] = None
     createdByName: Optional[str] = None
+    departmentId: Optional[str] = None
+    departmentName: Optional[str] = None
+    customer: Optional[str] = None
+    questions: list[QuestionOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -82,8 +90,37 @@ class SurveyOut(BaseModel):
             createdAt=survey.created_at,
             startDate=survey.start_date,
             endDate=survey.end_date,
-            questions=[QuestionOut.model_validate(q) for q in survey.questions],
+            createdBy=survey.created_by,
             createdByName=created_by_name,
+            departmentId=survey.department_id,
+            departmentName=survey.department.name if survey.department else None,
+            customer=survey.customer,
+            questions=[QuestionOut.model_validate(q) for q in survey.questions],
+        )
+
+
+class PublicSurveyOut(BaseModel):
+    """Public, unauthenticated view of a survey — omits internal metadata."""
+    id: str
+    title: str
+    description: str
+    status: SurveyStatus
+    createdAt: datetime
+    startDate: Optional[datetime] = None
+    endDate: Optional[datetime] = None
+    questions: list[QuestionOut] = []
+
+    @classmethod
+    def from_orm_survey(cls, survey) -> "PublicSurveyOut":
+        return cls(
+            id=survey.id,
+            title=survey.title,
+            description=survey.description,
+            status=survey.status,
+            createdAt=survey.created_at,
+            startDate=survey.start_date,
+            endDate=survey.end_date,
+            questions=[QuestionOut.model_validate(q) for q in survey.questions],
         )
 
 
@@ -94,6 +131,8 @@ class ResponseCreate(BaseModel):
     answers: dict[str, Any] = {}
     is_complete: bool = True
     respondent_email: Optional[str] = None
+    respondent_name: Optional[str] = None
+    is_anonymous: bool = False
 
 
 class ResponseOut(BaseModel):
@@ -102,6 +141,8 @@ class ResponseOut(BaseModel):
     answers: dict[str, Any]
     submittedAt: datetime
     is_complete: bool
+    respondentName: Optional[str] = None
+    isAnonymous: bool = False
 
     @classmethod
     def from_orm_response(cls, r) -> "ResponseOut":
@@ -111,7 +152,29 @@ class ResponseOut(BaseModel):
             answers=r.answers,
             submittedAt=r.submitted_at,
             is_complete=r.is_complete,
+            respondentName=None if r.is_anonymous else r.respondent_name,
+            isAnonymous=bool(r.is_anonymous),
         )
+
+
+# ── Department ────────────────────────────────────────────────────────────────
+
+class DepartmentCreate(BaseModel):
+    name: str
+
+
+class DepartmentUpdate(BaseModel):
+    name: Optional[str] = None
+
+
+class DepartmentOut(BaseModel):
+    id: str
+    name: str
+    createdAt: datetime
+
+    @classmethod
+    def from_orm_department(cls, d) -> "DepartmentOut":
+        return cls(id=d.id, name=d.name, createdAt=d.created_at)
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -131,6 +194,17 @@ class ThemeCount(BaseModel):
     count: int
 
 
+class RatingBucket(BaseModel):
+    rating: int
+    count: int
+
+
+class DepartmentBucket(BaseModel):
+    department: str
+    responses: int
+    surveys: int
+
+
 class DashboardAnalytics(BaseModel):
     totalResponses: int
     surveyCount: int
@@ -140,6 +214,9 @@ class DashboardAnalytics(BaseModel):
     nps: float
     responseTrend: list[TrendPoint]
     surveyPerformance: list[TrendPoint]
+    ratingDistribution: list[RatingBucket] = []
+    departmentBreakdown: list[DepartmentBucket] = []
+    adminSurveyBreakdown: list[TrendPoint] = []
 
 
 class SurveyAnalytics(BaseModel):

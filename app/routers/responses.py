@@ -5,7 +5,7 @@ import hashlib
 import uuid
 
 from ..database import get_db
-from ..models import Response, Survey, SurveyDistribution, AuditLog
+from ..models import Response, Survey, SurveyDistribution, AuditLog, UserRole
 from ..schemas import ResponseCreate, ResponseOut
 from ..security import require_any
 
@@ -45,12 +45,15 @@ def submit_response(payload: ResponseCreate, request: Request, db: Session = Dep
     if existing:
         raise HTTPException(status_code=409, detail="You have already submitted a response to this survey")
 
+    respondent_name = (payload.respondent_name or "").strip() or None
     response = Response(
         id=str(uuid.uuid4()),
         survey_id=payload.surveyId,
         answers=payload.answers,
         submission_fingerprint=fingerprint,
         is_complete=payload.is_complete,
+        respondent_name=None if payload.is_anonymous else respondent_name,
+        is_anonymous=bool(payload.is_anonymous),
     )
     db.add(response)
 
@@ -84,8 +87,17 @@ def list_responses(
     db: Session = Depends(get_db),
     current_user=Depends(require_any),
 ):
-    query = db.query(Response)
+    query = db.query(Response).join(Survey, Survey.id == Response.survey_id)
+    # Non-admins: only responses for surveys they own
+    if current_user.role != UserRole.admin:
+        query = query.filter(Survey.created_by == current_user.id)
     if survey_id:
+        # Extra ownership check on a specific survey
+        survey = db.query(Survey).filter(Survey.id == survey_id).first()
+        if not survey:
+            raise HTTPException(status_code=404, detail="Survey not found")
+        if current_user.role != UserRole.admin and survey.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="You can only view responses for surveys you created")
         query = query.filter(Response.survey_id == survey_id)
     responses = query.order_by(Response.submitted_at.desc()).all()
     return [ResponseOut.from_orm_response(r) for r in responses]

@@ -48,6 +48,16 @@ class User(Base):
     audit_logs = relationship("AuditLog", back_populates="user")
 
 
+class Department(Base):
+    __tablename__ = "departments"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    surveys = relationship("Survey", back_populates="department")
+
+
 class Survey(Base):
     __tablename__ = "surveys"
 
@@ -59,6 +69,8 @@ class Survey(Base):
     end_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    department_id = Column(String, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    customer = Column(String, nullable=True)
 
     questions = relationship(
         "Question", back_populates="survey",
@@ -67,6 +79,7 @@ class Survey(Base):
     responses = relationship("Response", back_populates="survey", cascade="all, delete-orphan")
     distributions = relationship("SurveyDistribution", back_populates="survey", cascade="all, delete-orphan")
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
+    department = relationship("Department", back_populates="surveys")
 
 
 class Question(Base):
@@ -93,6 +106,8 @@ class Response(Base):
     # Duplicate prevention fingerprint (hash of IP + user-agent)
     submission_fingerprint = Column(String, nullable=True, index=True)
     is_complete = Column(Boolean, default=True)
+    respondent_name = Column(String, nullable=True)
+    is_anonymous = Column(Boolean, default=False)
 
     survey = relationship("Survey", back_populates="responses")
 

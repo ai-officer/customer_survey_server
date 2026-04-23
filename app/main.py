@@ -7,9 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from .database import engine, Base, SessionLocal
-from .models import User, UserRole
+from .models import User, UserRole, Department
 from .security import hash_password
-from .routers import surveys, responses, analytics, auth, users, audit, distribution, export
+from .routers import surveys, responses, analytics, auth, users, audit, distribution, export, departments
 
 
 def _seed_admin(db):
@@ -54,6 +54,40 @@ def _run_migrations(db):
     ))
     db.commit()
 
+    # Survey: add department_id, customer columns
+    db.execute(text(
+        "ALTER TABLE surveys ADD COLUMN IF NOT EXISTS department_id VARCHAR REFERENCES departments(id) ON DELETE SET NULL"
+    ))
+    db.execute(text(
+        "ALTER TABLE surveys ADD COLUMN IF NOT EXISTS customer VARCHAR"
+    ))
+    # Response: add respondent_name, is_anonymous
+    db.execute(text(
+        "ALTER TABLE responses ADD COLUMN IF NOT EXISTS respondent_name VARCHAR"
+    ))
+    db.execute(text(
+        "ALTER TABLE responses ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT FALSE"
+    ))
+    db.commit()
+
+
+def _seed_departments(db):
+    """Seed an empty departments table on first run. Admins can manage the list at runtime."""
+    if db.query(Department).count() > 0:
+        return
+    starter = [
+        "Human Resources",
+        "Information Technology",
+        "Finance",
+        "Operations",
+        "Sales",
+        "Marketing",
+        "Customer Service",
+    ]
+    for name in starter:
+        db.add(Department(id=str(uuid.uuid4()), name=name))
+    db.commit()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -62,6 +96,7 @@ async def lifespan(app: FastAPI):
     try:
         _run_migrations(db)
         _seed_admin(db)
+        _seed_departments(db)
     finally:
         db.close()
     yield
@@ -84,6 +119,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(departments.router)
 app.include_router(surveys.router)
 app.include_router(distribution.router)
 app.include_router(responses.router)

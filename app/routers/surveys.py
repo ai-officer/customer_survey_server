@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security.utils import get_authorization_scheme_param
 from sqlalchemy.orm import Session
+from typing import Optional
 import uuid
 
 from ..database import get_db
-from ..models import Survey, Question, AuditLog, User
-from ..schemas import SurveyCreate, SurveyUpdate, SurveyOut
-from ..security import require_admin_or_manager, require_any
+from ..models import Survey, Question, AuditLog, User, UserRole
+from ..schemas import SurveyCreate, SurveyUpdate, SurveyOut, PublicSurveyOut
+from ..security import require_admin_or_manager, require_any, decode_token
 
 router = APIRouter(prefix="/api/surveys", tags=["surveys"])
 
@@ -49,6 +51,9 @@ def list_surveys(
     current_user: User = Depends(require_any),
 ):
     q = db.query(Survey)
+    # Managers see only their own surveys; admins see all.
+    if current_user.role != UserRole.admin:
+        q = q.filter(Survey.created_by == current_user.id)
     if filter_status:
         q = q.filter(Survey.status == filter_status)
     surveys = q.order_by(Survey.created_at.desc()).all()
@@ -69,6 +74,8 @@ def create_survey(
         status=payload.status,
         start_date=payload.start_date,
         end_date=payload.end_date,
+        department_id=payload.department_id,
+        customer=payload.customer,
         created_by=current_user.id,
     )
     db.add(survey)
@@ -80,13 +87,35 @@ def create_survey(
     return SurveyOut.from_orm_survey(survey)
 
 
-@router.get("/{survey_id}", response_model=SurveyOut)
-def get_survey(survey_id: str, db: Session = Depends(get_db)):
-    # Public — no auth required (customers take surveys)
+def _try_current_user(request: Request, db: Session) -> Optional[User]:
+    """Decode bearer token if present; return User or None. Never raises."""
+    auth = request.headers.get("authorization", "")
+    scheme, token = get_authorization_scheme_param(auth)
+    if not token or scheme.lower() != "bearer":
+        return None
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    return db.query(User).filter(User.id == user_id, User.is_active == True).first()
+
+
+@router.get("/{survey_id}")
+def get_survey(survey_id: str, request: Request, db: Session = Depends(get_db)):
+    """Public endpoint — customers use it to fill out surveys.
+    Authenticated admins/managers (or the owner) receive full metadata; public
+    visitors see a stripped-down view."""
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
-    return SurveyOut.from_orm_survey(survey)
+
+    user = _try_current_user(request, db)
+    if user and (user.role == UserRole.admin or survey.created_by == user.id):
+        return SurveyOut.from_orm_survey(survey)
+    return PublicSurveyOut.from_orm_survey(survey)
 
 
 @router.put("/{survey_id}", response_model=SurveyOut)
@@ -101,6 +130,10 @@ def update_survey(
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
 
+    # Non-admins can only edit their own surveys
+    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only edit surveys you created")
+
     if payload.title is not None:
         survey.title = payload.title
     if payload.description is not None:
@@ -111,6 +144,10 @@ def update_survey(
         survey.start_date = payload.start_date
     if payload.end_date is not None:
         survey.end_date = payload.end_date
+    if payload.department_id is not None:
+        survey.department_id = payload.department_id or None
+    if payload.customer is not None:
+        survey.customer = payload.customer or None
     if payload.questions is not None:
         _sync_questions(survey, payload.questions, db)
 
@@ -130,6 +167,8 @@ def delete_survey(
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
+    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only delete surveys you created")
     _log(db, current_user.id, "DELETE_SURVEY", survey_id, f"Deleted: {survey.title}", _ip(request))
     db.delete(survey)
     db.commit()
