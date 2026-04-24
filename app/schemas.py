@@ -74,11 +74,12 @@ class SurveyOut(BaseModel):
     departmentName: Optional[str] = None
     customer: Optional[str] = None
     questions: list[QuestionOut] = []
+    responseCount: int = 0
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_survey(cls, survey) -> "SurveyOut":
+    def from_orm_survey(cls, survey, response_count: int = 0) -> "SurveyOut":
         created_by_name = None
         if hasattr(survey, "creator") and survey.creator:
             created_by_name = survey.creator.full_name
@@ -96,6 +97,7 @@ class SurveyOut(BaseModel):
             departmentName=survey.department.name if survey.department else None,
             customer=survey.customer,
             questions=[QuestionOut.model_validate(q) for q in survey.questions],
+            responseCount=response_count,
         )
 
 
