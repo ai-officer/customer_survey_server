@@ -7,3 +7,25 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+
+# Dev / test screenshots and Playwright artefacts
+*.png
+*.jpg
+*.jpeg
+.playwright-mcp/
+
+# Claude Code worker scratch
+.claude/
+
+# Local virtualenvs
+.venv/
+venv/
+.venv-test/
+
+# Local seed / setup scripts (kept on disk only)
+seed.py
+setup_db.sh
+
+# Business documents (kept on disk, removed from index)
+*.docx
+*.pdf
