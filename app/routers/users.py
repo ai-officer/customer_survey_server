@@ -5,8 +5,9 @@ from typing import Optional
 import uuid
 
 from ..database import get_db
-from ..models import User, UserRole, AuditLog
+from ..models import User, UserRole
 from ..security import hash_password, require_admin
+from ..utils.audit import get_client_ip, record_audit
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -33,22 +34,6 @@ class UserOut(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
-
-
-def _log(db, actor_id, action, resource_id, detail, ip):
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
-        user_id=actor_id,
-        action=action,
-        resource="user",
-        resource_id=resource_id,
-        detail=detail,
-        ip_address=ip,
-    ))
-
-
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 @router.get("", response_model=list[UserOut])
@@ -80,8 +65,15 @@ def create_user(
     )
     db.add(user)
     db.flush()
-    _log(db, current_user.id, "CREATE_USER", user.id,
-         f"Admin created user: {user.email} ({user.role})", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="CREATE_USER",
+        resource="user",
+        resource_id=user.id,
+        detail=f"Admin created user: {user.email} ({user.role})",
+        ip=get_client_ip(request),
+    )
     db.commit()
     db.refresh(user)
     return user
@@ -108,8 +100,15 @@ def update_user(
     if payload.password:
         user.hashed_password = hash_password(payload.password)
 
-    _log(db, current_user.id, "UPDATE_USER", user.id,
-         f"Admin updated user: {user.email}", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="UPDATE_USER",
+        resource="user",
+        resource_id=user.id,
+        detail=f"Admin updated user: {user.email}",
+        ip=get_client_ip(request),
+    )
     db.commit()
     db.refresh(user)
     return user
@@ -128,6 +127,13 @@ def deactivate_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
     user.is_active = False
-    _log(db, current_user.id, "DEACTIVATE_USER", user.id,
-         f"Admin deactivated: {user.email}", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="DEACTIVATE_USER",
+        resource="user",
+        resource_id=user.id,
+        detail=f"Admin deactivated: {user.email}",
+        ip=get_client_ip(request),
+    )
     db.commit()

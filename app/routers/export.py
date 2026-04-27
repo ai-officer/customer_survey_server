@@ -12,8 +12,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
 from ..database import get_db
-from ..models import Survey, Response, User, UserRole
+from ..models import Survey, Response, User
 from ..security import require_admin_or_manager
+from ..utils.authorization import ensure_owner_or_admin
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -55,8 +56,11 @@ def export_responses(
     current_user: User = Depends(require_admin_or_manager),
 ):
     survey, responses = _get_survey_and_responses(survey_id, db)
-    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only export responses for surveys you created")
+    ensure_owner_or_admin(
+        current_user,
+        survey.created_by,
+        message="You can only export responses for surveys you created",
+    )
     headers, rows = _build_rows(survey, responses)
     filename_base = survey.title.replace(" ", "_")[:40]
 

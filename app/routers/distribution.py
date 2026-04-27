@@ -6,31 +6,16 @@ from typing import List
 import uuid
 
 from ..database import get_db
-from ..models import Survey, SurveyDistribution, AuditLog, User
+from ..models import Survey, SurveyDistribution, User
 from ..security import require_admin_or_manager
 from ..email import send_survey_invites_batch, send_survey_reminders_batch
+from ..utils.audit import get_client_ip, record_audit
 
 router = APIRouter(prefix="/api/surveys", tags=["distribution"])
 
 
 class DistributePayload(BaseModel):
     emails: List[str]
-
-
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
-
-
-def _audit(db: Session, user_id: str, action: str, resource_id: str, detail: str, ip: str):
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
-        action=action,
-        resource="survey",
-        resource_id=resource_id,
-        detail=detail,
-        ip_address=ip,
-    ))
 
 
 @router.post("/{survey_id}/distribute")
@@ -71,12 +56,17 @@ def distribute(
             email=email,
             sent_at=now,
         ))
-    _audit(
-        db, current_user.id,
-        "DISTRIBUTE_SURVEY", survey.id,
-        f"Distributed to {len(new_emails)} new recipients "
-        f"({len(incoming) - len(new_emails)} already invited)",
-        _ip(request),
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="DISTRIBUTE_SURVEY",
+        resource="survey",
+        resource_id=survey.id,
+        detail=(
+            f"Distributed to {len(new_emails)} new recipients "
+            f"({len(incoming) - len(new_emails)} already invited)"
+        ),
+        ip=get_client_ip(request),
     )
     db.commit()
 
@@ -120,11 +110,14 @@ def remind(
     now = datetime.now(timezone.utc)
     for d in pending:
         d.reminder_sent_at = now
-    _audit(
-        db, current_user.id,
-        "REMIND_NON_RESPONDENTS", survey.id,
-        f"Sent reminders to {len(pending)} non-responders",
-        _ip(request),
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="REMIND_NON_RESPONDENTS",
+        resource="survey",
+        resource_id=survey.id,
+        detail=f"Sent reminders to {len(pending)} non-responders",
+        ip=get_client_ip(request),
     )
     db.commit()
 

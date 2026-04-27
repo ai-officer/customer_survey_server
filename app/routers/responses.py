@@ -5,9 +5,11 @@ import hashlib
 import uuid
 
 from ..database import get_db
-from ..models import Response, Survey, SurveyDistribution, AuditLog, UserRole
+from ..models import Response, Survey, SurveyDistribution, UserRole
 from ..schemas import ResponseCreate, ResponseOut
 from ..security import require_any
+from ..utils.audit import get_client_ip, record_audit
+from ..utils.authorization import ensure_owner_or_admin
 
 router = APIRouter(prefix="/api/responses", tags=["responses"])
 
@@ -66,15 +68,15 @@ def submit_response(payload: ResponseCreate, request: Request, db: Session = Dep
         if dist:
             dist.has_responded = True
 
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
+    record_audit(
+        db,
         user_id=None,
         action="SUBMIT_RESPONSE",
         resource="response",
         resource_id=response.id,
         detail=f"Response submitted for survey: {payload.surveyId}",
-        ip_address=request.client.host if request.client else "unknown",
-    ))
+        ip=get_client_ip(request),
+    )
 
     db.commit()
     db.refresh(response)
@@ -96,8 +98,11 @@ def list_responses(
         survey = db.query(Survey).filter(Survey.id == survey_id).first()
         if not survey:
             raise HTTPException(status_code=404, detail="Survey not found")
-        if current_user.role != UserRole.admin and survey.created_by != current_user.id:
-            raise HTTPException(status_code=403, detail="You can only view responses for surveys you created")
+        ensure_owner_or_admin(
+            current_user,
+            survey.created_by,
+            message="You can only view responses for surveys you created",
+        )
         query = query.filter(Response.survey_id == survey_id)
     responses = query.order_by(Response.submitted_at.desc()).all()
     return [ResponseOut.from_orm_response(r) for r in responses]

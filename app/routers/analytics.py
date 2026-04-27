@@ -12,6 +12,7 @@ from ..schemas import (
     RatingBucket, DepartmentBucket, DepartmentEngagement,
 )
 from ..security import require_any
+from ..utils.authorization import ensure_owner_or_admin
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -288,8 +289,11 @@ def survey_analytics(
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
-    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only view analytics for surveys you created")
+    ensure_owner_or_admin(
+        current_user,
+        survey.created_by,
+        message="You can only view analytics for surveys you created",
+    )
 
     resp_q = db.query(Response).filter(Response.survey_id == survey_id)
     if start_date:

@@ -5,27 +5,13 @@ from typing import Optional
 import uuid
 
 from ..database import get_db
-from ..models import Survey, Question, AuditLog, User, UserRole
+from ..models import Survey, Question, User, UserRole
 from ..schemas import SurveyCreate, SurveyUpdate, SurveyOut, PublicSurveyOut
 from ..security import require_admin_or_manager, require_any, decode_token
+from ..utils.audit import get_client_ip, record_audit
+from ..utils.authorization import ensure_owner_or_admin
 
 router = APIRouter(prefix="/api/surveys", tags=["surveys"])
-
-
-def _log(db, user_id, action, resource_id, detail, ip):
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
-        action=action,
-        resource="survey",
-        resource_id=resource_id,
-        detail=detail,
-        ip_address=ip,
-    ))
-
-
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 def _sync_questions(survey: Survey, questions_data: list, db: Session):
@@ -81,7 +67,15 @@ def create_survey(
     db.add(survey)
     db.flush()
     _sync_questions(survey, payload.questions, db)
-    _log(db, current_user.id, "CREATE_SURVEY", survey.id, f"Created: {survey.title}", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="CREATE_SURVEY",
+        resource="survey",
+        resource_id=survey.id,
+        detail=f"Created: {survey.title}",
+        ip=get_client_ip(request),
+    )
     db.commit()
     db.refresh(survey)
     return SurveyOut.from_orm_survey(survey)
@@ -130,9 +124,11 @@ def update_survey(
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
 
-    # Non-admins can only edit their own surveys
-    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only edit surveys you created")
+    ensure_owner_or_admin(
+        current_user,
+        survey.created_by,
+        message="You can only edit surveys you created",
+    )
 
     if payload.title is not None:
         survey.title = payload.title
@@ -151,7 +147,15 @@ def update_survey(
     if payload.questions is not None:
         _sync_questions(survey, payload.questions, db)
 
-    _log(db, current_user.id, "UPDATE_SURVEY", survey.id, f"Updated: {survey.title}", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="UPDATE_SURVEY",
+        resource="survey",
+        resource_id=survey.id,
+        detail=f"Updated: {survey.title}",
+        ip=get_client_ip(request),
+    )
     db.commit()
     db.refresh(survey)
     return SurveyOut.from_orm_survey(survey)
@@ -167,9 +171,20 @@ def delete_survey(
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey not found")
-    if current_user.role != UserRole.admin and survey.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only delete surveys you created")
-    _log(db, current_user.id, "DELETE_SURVEY", survey_id, f"Deleted: {survey.title}", _ip(request))
+    ensure_owner_or_admin(
+        current_user,
+        survey.created_by,
+        message="You can only delete surveys you created",
+    )
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="DELETE_SURVEY",
+        resource="survey",
+        resource_id=survey_id,
+        detail=f"Deleted: {survey.title}",
+        ip=get_client_ip(request),
+    )
     db.delete(survey)
     db.commit()
 
@@ -208,7 +223,15 @@ def duplicate_survey(
             order=q.order,
         ))
 
-    _log(db, current_user.id, "DUPLICATE_SURVEY", new_survey.id, f"Duplicated from: {original.id}", _ip(request))
+    record_audit(
+        db,
+        user_id=current_user.id,
+        action="DUPLICATE_SURVEY",
+        resource="survey",
+        resource_id=new_survey.id,
+        detail=f"Duplicated from: {original.id}",
+        ip=get_client_ip(request),
+    )
     db.commit()
     db.refresh(new_survey)
     return SurveyOut.from_orm_survey(new_survey)

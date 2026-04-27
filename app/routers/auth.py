@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-import uuid
 
 from ..database import get_db
-from ..models import User, UserRole, AuditLog
+from ..models import User, UserRole
 from ..security import verify_password, hash_password, create_access_token, get_current_user
+from ..utils.audit import get_client_ip, record_audit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -39,15 +39,15 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Your account has been deactivated")
 
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
+    record_audit(
+        db,
         user_id=user.id,
         action="LOGIN",
         resource="user",
         resource_id=user.id,
         detail=f"User logged in: {user.email}",
-        ip_address=request.client.host if request and request.client else "unknown",
-    ))
+        ip=get_client_ip(request),
+    )
     db.commit()
 
     token = create_access_token({"sub": user.id, "role": user.role})
@@ -81,14 +81,13 @@ def change_password(
 
     current_user.hashed_password = hash_password(payload.new_password)
 
-    ip = request.client.host if request.client else "unknown"
-    db.add(AuditLog(
-        id=str(uuid.uuid4()),
+    record_audit(
+        db,
         user_id=current_user.id,
         action="CHANGE_PASSWORD",
         resource="user",
         resource_id=current_user.id,
         detail=f"User changed their password: {current_user.email}",
-        ip_address=ip,
-    ))
+        ip=get_client_ip(request),
+    )
     db.commit()
