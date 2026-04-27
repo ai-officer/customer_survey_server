@@ -328,12 +328,6 @@ def survey_analytics(
         CsatPoint(date=month, score=round(sum(scores) / len(scores), 2))
         for month, scores in sorted(monthly_scores.items())
     ]
-    if not csat_over_time:
-        now = datetime.now(timezone.utc)
-        csat_over_time = [
-            CsatPoint(date=(now - timedelta(days=30 * i)).strftime("%Y-%m"), score=0.0)
-            for i in range(3, -1, -1)
-        ]
 
     rating_scores = _extract_ratings(responses)
     nps = _compute_nps(rating_scores)
