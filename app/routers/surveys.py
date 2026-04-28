@@ -29,12 +29,20 @@ def _ip(request: Request) -> str:
 
 
 def _sync_questions(survey: Survey, questions_data: list, db: Session):
+    """Replace this survey's questions with the supplied list.
+
+    Always assigns fresh UUIDs to the new rows. Reusing client-supplied
+    question ids across the delete+insert cycle previously caused
+    primary-key conflicts in some SQLAlchemy session states (most
+    visibly when a manager flipped a survey draft -> published with
+    its existing question payload).
+    """
     for q in list(survey.questions):
         db.delete(q)
     db.flush()
     for idx, q_data in enumerate(questions_data):
         db.add(Question(
-            id=q_data.id if q_data.id else str(uuid.uuid4()),
+            id=str(uuid.uuid4()),
             survey_id=survey.id,
             type=q_data.type,
             text=q_data.text,
