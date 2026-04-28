@@ -36,14 +36,33 @@ def submit_response(payload: ResponseCreate, request: Request, db: Session = Dep
     if survey.end_date and now > survey.end_date:
         raise HTTPException(status_code=403, detail="Survey has closed")
 
-    # Duplicate submission check
+    # Per-recipient token preferred over fingerprint when present (avoids
+    # false-positive 'duplicate' for recipients on shared networks).
+    matched_dist: SurveyDistribution | None = None
+    if payload.token:
+        matched_dist = db.query(SurveyDistribution).filter(
+            SurveyDistribution.survey_id == payload.surveyId,
+            SurveyDistribution.id == payload.token,
+        ).first()
+        if matched_dist and matched_dist.has_responded:
+            raise HTTPException(
+                status_code=409,
+                detail="This invitation link has already been used to submit a response.",
+            )
+
+    # Fall back to IP+UA fingerprint dedup only when no token was supplied
+    # (anonymous public access via the bare /s/{id} URL).
     fingerprint = _build_fingerprint(request, payload.surveyId)
-    existing = db.query(Response).filter(
-        Response.survey_id == payload.surveyId,
-        Response.submission_fingerprint == fingerprint,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="You have already submitted a response to this survey")
+    if not payload.token:
+        existing = db.query(Response).filter(
+            Response.survey_id == payload.surveyId,
+            Response.submission_fingerprint == fingerprint,
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail="A response from this device has already been recorded for this survey.",
+            )
 
     respondent_name = (payload.respondent_name or "").strip() or None
     response = Response(
@@ -57,8 +76,10 @@ def submit_response(payload: ResponseCreate, request: Request, db: Session = Dep
     )
     db.add(response)
 
-    # Mark distribution record as responded if email is provided
-    if payload.respondent_email:
+    # Mark distribution as responded — prefer token match, fall back to email lookup
+    if matched_dist:
+        matched_dist.has_responded = True
+    elif payload.respondent_email:
         dist = db.query(SurveyDistribution).filter(
             SurveyDistribution.survey_id == payload.surveyId,
             SurveyDistribution.email == payload.respondent_email,

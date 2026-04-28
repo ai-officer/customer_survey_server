@@ -62,15 +62,20 @@ def distribute(
     }
     new_emails = [e for e in incoming if e not in existing_emails]
 
-    # Record distributions first — audit trail survives send failures
+    # Record distributions first — audit trail survives send failures.
+    # The distribution.id doubles as the per-recipient invite token so the
+    # email link is unique per recipient and can be deduped on submit.
     now = datetime.now(timezone.utc)
+    new_recipients = []
     for email in new_emails:
+        dist_id = str(uuid.uuid4())
         db.add(SurveyDistribution(
-            id=str(uuid.uuid4()),
+            id=dist_id,
             survey_id=survey_id,
             email=email,
             sent_at=now,
         ))
+        new_recipients.append({"email": email, "token": dist_id})
     _audit(
         db, current_user.id,
         "DISTRIBUTE_SURVEY", survey.id,
@@ -82,7 +87,7 @@ def distribute(
 
     # Send via Resend — synchronous batched call, reliable on Vercel serverless
     result = send_survey_invites_batch(
-        recipients=new_emails,
+        recipients=new_recipients,
         survey_id=survey.id,
         survey_title=survey.title,
         sender_name=current_user.full_name,
@@ -133,7 +138,7 @@ def remind(
     db.commit()
 
     result = send_survey_reminders_batch(
-        recipients=[d.email for d in pending],
+        recipients=[{"email": d.email, "token": d.id} for d in pending],
         survey_id=survey.id,
         survey_title=survey.title,
         sender_name=current_user.full_name,

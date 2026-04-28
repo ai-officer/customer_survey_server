@@ -26,8 +26,9 @@ def _from_field(sender_name: Optional[str]) -> str:
     return f"{APP_NAME} <{FROM_EMAIL}>"
 
 
-def _survey_url(survey_id: str) -> str:
-    return f"{PUBLIC_APP_URL}/s/{survey_id}"
+def _survey_url(survey_id: str, token: Optional[str] = None) -> str:
+    base = f"{PUBLIC_APP_URL}/s/{survey_id}"
+    return f"{base}?t={token}" if token else base
 
 
 # ── GCG brand palette (mail-safe hex; OKLCH not supported in HTML email) ───
@@ -225,60 +226,75 @@ def _first_name(full_name: str) -> str:
     return (full_name or "").strip().split(" ")[0] or APP_NAME
 
 
+Recipient = dict  # {"email": str, "token": Optional[str]}
+
+
+def _build_payload(
+    *, kind: str, recipients: List[Recipient], survey_id: str, survey_title: str,
+    sender_name: str, sender_email: str, subject: str,
+    html_builder, text_builder,
+) -> list:
+    """Build per-recipient Resend payload entries, each with its own
+    survey URL stamped with that recipient's invite token. Recipients
+    without a token (e.g. CSV import use-case) get the bare survey URL."""
+    out = []
+    for r in recipients:
+        addr = r["email"] if isinstance(r, dict) else r
+        token = r.get("token") if isinstance(r, dict) else None
+        url = _survey_url(survey_id, token=token)
+        out.append({
+            "from": _from_field(sender_name),
+            "to": [addr],
+            "reply_to": [sender_email] if sender_email else [FROM_EMAIL],
+            "subject": subject,
+            "html": html_builder(survey_title, url, sender_name),
+            "text": text_builder(survey_title, url, sender_name),
+            "headers": {
+                # Signals to Gmail that this is a transactional message that
+                # recipients opted into — generally lifts Primary-tab routing.
+                "List-Unsubscribe": f"<mailto:{sender_email or FROM_EMAIL}?subject=unsubscribe>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+            "tags": [
+                {"name": "app", "value": "customer-survey"},
+                {"name": "type", "value": kind},
+                {"name": "survey_id", "value": survey_id},
+            ],
+        })
+    return out
+
+
 def send_survey_invites_batch(
-    *, recipients: List[str], survey_id: str, survey_title: str,
+    *, recipients: List[Recipient], survey_id: str, survey_title: str,
     sender_name: str, sender_email: str,
 ) -> dict:
-    url = _survey_url(survey_id)
-    body_html = _invite_html(survey_title, url, sender_name)
-    body_text = _invite_text(survey_title, url, sender_name)
-    # Personalised, transactional-sounding subject keeps it out of Promotions.
-    subject = f"{_first_name(sender_name)} would like your feedback"
-    payload = [{
-        "from": _from_field(sender_name),
-        "to": [addr],
-        "reply_to": [sender_email] if sender_email else [FROM_EMAIL],
-        "subject": subject,
-        "html": body_html,
-        "text": body_text,
-        "headers": {
-            # Tells Gmail this is a transactional message that recipients
-            # opted into — generally lifts Primary-tab classification.
-            "List-Unsubscribe": f"<mailto:{sender_email or FROM_EMAIL}?subject=unsubscribe>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-        "tags": [
-            {"name": "app", "value": "customer-survey"},
-            {"name": "type", "value": "invite"},
-            {"name": "survey_id", "value": survey_id},
-        ],
-    } for addr in recipients]
+    payload = _build_payload(
+        kind="invite",
+        recipients=recipients,
+        survey_id=survey_id,
+        survey_title=survey_title,
+        sender_name=sender_name,
+        sender_email=sender_email,
+        subject=f"{_first_name(sender_name)} would like your feedback",
+        html_builder=_invite_html,
+        text_builder=_invite_text,
+    )
     return _batch_send(payload=payload, kind="invites")
 
 
 def send_survey_reminders_batch(
-    *, recipients: List[str], survey_id: str, survey_title: str,
+    *, recipients: List[Recipient], survey_id: str, survey_title: str,
     sender_name: str, sender_email: str,
 ) -> dict:
-    url = _survey_url(survey_id)
-    body_html = _reminder_html(survey_title, url, sender_name)
-    body_text = _reminder_text(survey_title, url, sender_name)
-    subject = f"A quick reminder from {_first_name(sender_name)}"
-    payload = [{
-        "from": _from_field(sender_name),
-        "to": [addr],
-        "reply_to": [sender_email] if sender_email else [FROM_EMAIL],
-        "subject": subject,
-        "html": body_html,
-        "text": body_text,
-        "headers": {
-            "List-Unsubscribe": f"<mailto:{sender_email or FROM_EMAIL}?subject=unsubscribe>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-        "tags": [
-            {"name": "app", "value": "customer-survey"},
-            {"name": "type", "value": "reminder"},
-            {"name": "survey_id", "value": survey_id},
-        ],
-    } for addr in recipients]
+    payload = _build_payload(
+        kind="reminder",
+        recipients=recipients,
+        survey_id=survey_id,
+        survey_title=survey_title,
+        sender_name=sender_name,
+        sender_email=sender_email,
+        subject=f"A quick reminder from {_first_name(sender_name)}",
+        html_builder=_reminder_html,
+        text_builder=_reminder_text,
+    )
     return _batch_send(payload=payload, kind="reminders")

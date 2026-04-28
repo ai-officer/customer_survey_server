@@ -135,6 +135,10 @@ class ResponseCreate(BaseModel):
     respondent_email: Optional[str] = None
     respondent_name: Optional[str] = None
     is_anonymous: bool = False
+    # Per-recipient invite token. When present, dedupe is by token instead of
+    # by IP+UA fingerprint, so recipients sharing an office network can each
+    # submit their own response from their own emailed link.
+    token: Optional[str] = None
 
 
 class ResponseOut(BaseModel):
