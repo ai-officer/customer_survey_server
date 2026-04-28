@@ -94,7 +94,11 @@ def distribute(
         "already_invited":  len(incoming) - len(new_emails),
         "sent":             result["sent"],
         "failed":           result["failed"],
-        "message":          f"Sent {result['sent']} invite(s)",
+        "error":            result.get("error"),
+        "message":          f"Sent {result['sent']} invite(s)" + (
+            f" ({result['failed']} failed: {result['error']})"
+            if result["failed"] and result.get("error") else ""
+        ),
     }
 
 
@@ -139,5 +143,9 @@ def remind(
     return {
         "sent":    result["sent"],
         "failed":  result["failed"],
-        "message": f"Reminded {result['sent']} recipient(s)",
+        "error":   result.get("error"),
+        "message": f"Reminded {result['sent']} recipient(s)" + (
+            f" ({result['failed']} failed: {result['error']})"
+            if result["failed"] and result.get("error") else ""
+        ),
     }
