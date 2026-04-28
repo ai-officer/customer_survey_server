@@ -5,7 +5,7 @@ from typing import Optional
 import uuid
 
 from ..database import get_db
-from ..models import Survey, Question, AuditLog, User, UserRole
+from ..models import Survey, Question, AuditLog, User, UserRole, SurveyDistribution
 from ..schemas import SurveyCreate, SurveyUpdate, SurveyOut, PublicSurveyOut
 from ..security import require_admin_or_manager, require_any, decode_token
 
@@ -220,3 +220,27 @@ def duplicate_survey(
     db.commit()
     db.refresh(new_survey)
     return SurveyOut.from_orm_survey(new_survey)
+
+
+@router.post("/{survey_id}/scan-token", status_code=201)
+def mint_scan_token(survey_id: str, db: Session = Depends(get_db)):
+    """Public endpoint. Mints a single-use anonymous invite token for a
+    QR scan or direct public landing. The frontend calls this on mount when
+    no `?t=` is present in the URL, then submits with the returned token —
+    so each scan dedupes against itself rather than against an IP+UA
+    fingerprint that could collide with a co-worker on the same Wi-Fi."""
+    survey = db.query(Survey).filter(Survey.id == survey_id).first()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey not found")
+    if survey.status != "published":
+        raise HTTPException(status_code=403, detail="Survey is not accepting responses")
+
+    token = SurveyDistribution(
+        id=str(uuid.uuid4()),
+        survey_id=survey_id,
+        email=None,
+    )
+    db.add(token)
+    db.commit()
+    db.refresh(token)
+    return {"token": token.id}

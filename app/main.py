@@ -65,6 +65,11 @@ def _run_migrations(db):
     db.execute(text(
         "ALTER TABLE responses ADD COLUMN IF NOT EXISTS respondent_name VARCHAR"
     ))
+    # SurveyDistribution: allow null email so QR-scan tokens (no recipient
+    # known yet) can use the same table for per-visit dedup.
+    db.execute(text(
+        "ALTER TABLE survey_distributions ALTER COLUMN email DROP NOT NULL"
+    ))
     db.execute(text(
         "ALTER TABLE responses ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT FALSE"
     ))

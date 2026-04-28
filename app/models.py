@@ -113,12 +113,14 @@ class Response(Base):
 
 
 class SurveyDistribution(Base):
-    """Tracks which emails a survey was distributed to."""
+    """Tracks per-recipient invite tokens. `email` is nullable: rows without
+    an email are anonymous tokens minted on QR scans / public landings, used
+    purely as a per-visit dedup key."""
     __tablename__ = "survey_distributions"
 
     id = Column(String, primary_key=True, default=generate_uuid)
     survey_id = Column(String, ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False)
-    email = Column(String, nullable=False)
+    email = Column(String, nullable=True)
     sent_at = Column(DateTime(timezone=True), server_default=func.now())
     reminder_sent_at = Column(DateTime(timezone=True), nullable=True)
     has_responded = Column(Boolean, default=False)
